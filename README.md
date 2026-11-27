@@ -40,7 +40,9 @@ Roles: Manufacturing User/Manager, Stock User/Manager, System Manager. SQL appli
 bench --site <site> set-config allow_tests true
 bench --site <site> run-tests --app monthly_production_report
 ```
-49 integration tests (16 production, 15 stock summary, 18 WIP) create real BOMs, Work Orders and submitted Manufacture entries (rolled back afterwards). They cover WO filter, blank WO, multiple WOs, date ranges, month defaults (no hard-coded dates), FG-only rows, split FG rows plus scrap, additional cost, ledger reconciliation, monthly aggregation, KPIs/charts, total row, draft and cancelled exclusion, date validation, empty/zero cases and company user permissions.
+Always pass `--app`: without it, bench also runs other apps' test setup, which writes to the site.
+
+71 integration tests (16 production, 15 balance listing, 22 category summary, 18 WIP) create real BOMs, Work Orders and submitted Manufacture entries (rolled back afterwards). They cover WO filter, blank WO, multiple WOs, date ranges, month defaults (no hard-coded dates), FG-only rows, split FG rows plus scrap, additional cost, ledger reconciliation, monthly aggregation, KPIs/charts, total row, draft and cancelled exclusion, date validation, empty/zero cases and company user permissions.
 
 ## Known limits
 * Totals are in raw numbers; if companies with different currencies are visible together, values are mixed.
@@ -50,9 +52,65 @@ bench --site <site> run-tests --app monthly_production_report
 
 # Stock Summary With Detailed Breakup
 
-Filters: Company (mandatory), From Date (optional), To Date (default today), Item, Item Group (incl. children),
-Warehouse (a group warehouse includes its children), Stock UOM, Project, Group By (Item and Warehouse / Item /
-Warehouse / Item Group), Include Zero Stock.
+The **View** filter selects **Category Summary** (default) or **Balance Listing**.
+
+## Category Summary
+
+Sections: header (company, period), Stock Summary by category, item-wise breakup per category, and
+Difference (summary vs breakup).
+
+Filters: Company (mandatory), From Date (default first of month), To Date (default today), Item,
+Item Group (incl. children), Warehouse (a group warehouse includes its children).
+
+### Set up the category mapping first
+
+1. Open **Stock Category Mapping** (button on the report, or `/app/stock-category-mapping`).
+2. Add one record per Item Group: choose Raw Material, Semi Finished Goods, Finished Goods or Packing Material.
+3. Sub-groups inherit the nearest mapped parent. A sub-group's own mapping overrides it.
+4. Run the report. Items still unmapped appear in an **Unmapped** row and section, and are listed above the report.
+
+Records can also be loaded with Data Import. System Manager and Stock Manager can edit them.
+A change applies to all periods, including past ones.
+
+### What goes in each column
+
+| Category | Inward | Outward |
+|---|---|---|
+| Raw Material, Packing Material | Purchase (Purchase Receipt, Purchase Invoice with Update Stock), net of returns | Consumption (Manufacture, Material Consumption for Manufacture, subcontracting) |
+| Semi Finished Goods | Production (Manufacture, Subcontracting Receipt) | Consumption |
+| Finished Goods | Production | Sales (Delivery Note, Sales Invoice with Update Stock), net of returns |
+
+Everything else is shown, net, in **Other (Net)** columns, which appear only when needed:
+Stock Reconciliation, **Material Issue**, Material Receipt, Repack, warehouse transfers (only with a
+warehouse filter; they cancel out company-wide), and movements outside a category's own types, such as
+purchased finished goods or sold raw material. So `Opening + Inward - Outward + Other = Closing`.
+
+* Returns have their own row per item, marked *Purchase Return* or *Sales Return*. A sales return is a
+  negative **Sales** figure, so it increases closing stock.
+* Opening includes "Opening Stock" vouchers dated inside the period, as in ERPNext's Stock Balance.
+* Values are the ledger's `stock_value_difference`, never qty x rate. Quantities are in stock UOM, and
+  totals add different UOMs.
+* Click an Inward / Outward / Other figure to list its vouchers. Click an item code for the Stock Ledger.
+* **Download Excel (Report Format)** gives the two-level header layout. Menu > Export gives plain Excel or CSV.
+
+### Reconciliation
+
+* *Difference* compares each category summary with the sum of its item rows. Both come from the same
+  ledger read, so this guards the report's arithmetic.
+* The report also compares each item and warehouse's summed movements with the running balance stored
+  in the ledger. Mismatches are listed at the end; check **Repost Item Valuation** for pending or failed entries.
+* Check totals against ERPNext's **Stock Balance** report on your own data before relying on them.
+
+### Limits
+
+* Batch and serial items, subcontracting and same-company internal sales / purchases have no dedicated tests.
+* The query reads the company's ledger history up to To Date. It has not been benchmarked on large data.
+* Needs MariaDB 10.2 or later (window functions).
+
+## Balance Listing
+
+Extra filters: Stock UOM, Project, Group By (Item and Warehouse / Item / Warehouse / Item Group),
+Include Zero Stock.
 
 * Source: `Stock Ledger Entry` (`is_cancelled = 0`), never the current Bin, so any historical date works.
 * Opening = entries before From Date; Inward / Outward = entries inside the period with qty (value) >= 0 / < 0;
@@ -93,7 +151,8 @@ warehouse the total equals the WIP warehouse ledger value (tested).
 ```bash
 cd ~/frappe-bench/apps/monthly_production_report && git pull
 cd ~/frappe-bench
-bench --site <site> migrate          # registers the two new reports
+bench --site <site> backup
+bench --site <site> migrate          # creates Stock Category Mapping and syncs the reports
 bench build --app monthly_production_report && bench --site <site> clear-cache
 bench restart
 ```

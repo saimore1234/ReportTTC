@@ -73,8 +73,9 @@ def make_bom(company, item, components):
 	return bom.name
 
 
-def make_work_order(company, item, bom, qty, stores, wip, fg_wh, skip_transfer=0):
+def make_work_order(company, item, bom, qty, stores, wip, fg_wh, skip_transfer=0, multi_level=1):
 	wo = frappe.new_doc("Work Order")
+	wo.use_multi_level_bom = multi_level
 	wo.production_item = item
 	wo.bom_no = bom
 	wo.qty = qty

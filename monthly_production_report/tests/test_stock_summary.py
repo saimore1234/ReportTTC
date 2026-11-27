@@ -17,6 +17,7 @@ P = "MPR-SS"
 
 
 def run(**filters):
+	filters.setdefault("view", "Balance Listing")
 	columns, data, _m, chart, summary = report.execute(filters)
 	return frappe._dict(columns=columns, data=data, chart=chart, summary=summary)
 
